@@ -54,21 +54,13 @@ def list_emails():
     credentials = get_credentials()
     service = build('gmail', 'v1', credentials=credentials)
     
-    # Get query parameters for filtering
-    sender = request.args.get('from')
-    subject = request.args.get('subject')
-    
-    # Build query string
-    query = []
-    if sender:
-        query.append(f'from:{sender}')
-    if subject:
-        query.append(f'subject:{subject}')
+    # Default filter for specific emails
+    query = 'from:no.reply.afbraga.arbitragem@fpf.pt subject:"Nomeação de jogo"'
     
     results = service.users().messages().list(
         userId='me',
         maxResults=10,
-        q=' '.join(query)
+        q=query
     ).execute()
     
     messages = results.get('messages', [])
@@ -82,12 +74,21 @@ def list_emails():
             format='metadata',
             metadataHeaders=['From', 'Subject', 'Date']
         ).execute()
-        full_messages.append({
+        
+        # Print email details to console
+        email_details = {
             'id': msg['id'],
             'from': next(h['value'] for h in message['payload']['headers'] if h['name'] == 'From'),
             'subject': next(h['value'] for h in message['payload']['headers'] if h['name'] == 'Subject'),
             'date': next(h['value'] for h in message['payload']['headers'] if h['name'] == 'Date')
-        })
+        }
+        print(f"Email ID: {email_details['id']}")
+        print(f"From: {email_details['from']}")
+        print(f"Subject: {email_details['subject']}")
+        print(f"Date: {email_details['date']}")
+        print("-" * 40)
+        
+        full_messages.append(email_details)
     
     return render_template('emails.html', messages=full_messages)
 
