@@ -52,7 +52,24 @@ def auth_google():
 def list_emails():
     credentials = get_credentials()
     service = build('gmail', 'v1', credentials=credentials)
-    results = service.users().messages().list(userId='me', maxResults=10).execute()
+    
+    # Get query parameters for filtering
+    sender = request.args.get('from')
+    subject = request.args.get('subject')
+    
+    # Build query string
+    query = []
+    if sender:
+        query.append(f'from:{sender}')
+    if subject:
+        query.append(f'subject:{subject}')
+    
+    results = service.users().messages().list(
+        userId='me',
+        maxResults=10,
+        q=' '.join(query)
+    ).execute()
+    
     messages = results.get('messages', [])
     
     # Get full message details for each email

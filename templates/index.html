@@ -32,7 +32,19 @@
     <div class="container">
         <h1>Gmail API App</h1>
         <div class="actions">
-            <a href="{{ url_for('list_emails') }}" class="action-btn">View Emails</a>
+            <div class="filter-form">
+                <h3>Filter Emails</h3>
+                <form action="{{ url_for('list_emails') }}" method="GET">
+                    <label for="from">From:</label>
+                    <input type="text" id="from" name="from" placeholder="Enter sender email">
+                    
+                    <label for="subject">Subject:</label>
+                    <input type="text" id="subject" name="subject" placeholder="Enter subject">
+                    
+                    <button type="submit" class="action-btn">Filter Emails</button>
+                </form>
+            </div>
+            <a href="{{ url_for('list_emails') }}" class="action-btn">View All Emails</a>
             <button class="action-btn" onclick="showSendForm()">Send Email</button>
         </div>
 
