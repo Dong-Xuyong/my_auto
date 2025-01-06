@@ -61,7 +61,7 @@ def auth_google():
     session['credentials'] = credentials_to_dict(credentials)
     return redirect(url_for('index'))
 
-def process_email(message_id):
+def process_referee_email(message_id):
     """Process individual email and create calendar event"""
     credentials = get_credentials()
     service = build('gmail', 'v1', credentials=credentials)
@@ -100,13 +100,21 @@ def list_emails():
     credentials = get_credentials()
     service = build('gmail', 'v1', credentials=credentials)
     
-    # Default filter for specific emails
-    query = 'from:no.reply.afbraga.arbitragem@fpf.pt subject:"Nomeação de jogo"'
+    # Get query parameters for filtering
+    sender = request.args.get('from')
+    subject = request.args.get('subject')
+    
+    # Build query string
+    query = []
+    if sender:
+        query.append(f'from:{sender}')
+    if subject:
+        query.append(f'subject:{subject}')
     
     results = service.users().messages().list(
         userId='me',
         maxResults=10,
-        q=query
+        q=' '.join(query)
     ).execute()
     
     messages = results.get('messages', [])
@@ -120,24 +128,12 @@ def list_emails():
             format='metadata',
             metadataHeaders=['From', 'Subject', 'Date']
         ).execute()
-        
-        # Print email details to console
-        email_details = {
+        full_messages.append({
             'id': msg['id'],
             'from': next(h['value'] for h in message['payload']['headers'] if h['name'] == 'From'),
             'subject': next(h['value'] for h in message['payload']['headers'] if h['name'] == 'Subject'),
             'date': next(h['value'] for h in message['payload']['headers'] if h['name'] == 'Date')
-        }
-        print(f"Email ID: {email_details['id']}")
-        print(f"From: {email_details['from']}")
-        print(f"Subject: {email_details['subject']}")
-        print(f"Date: {email_details['date']}")
-        print("-" * 40)
-        
-        # Process email in background
-        executor.submit(process_email, msg['id'])
-        
-        full_messages.append(email_details)
+        })
     
     return render_template('emails.html', messages=full_messages)
 
@@ -146,22 +142,50 @@ def check_emails_periodically():
     with app.app_context():
         while True:
             try:
+                # Debugging: Indicate that the function is running
+                print("Checking for new emails...")
+
+                # Get credentials
                 credentials = get_credentials()
                 if credentials:
+                    # Build the Gmail service
                     service = build('gmail', 'v1', credentials=credentials)
-                    query = 'from:no.reply.afbraga.arbitragem@fpf.pt subject:"Nomeação de jogo"'
+
+                    # Define the query to fetch unread emails with the specific subject and sender
+                    query = 'from:no.reply.afbraga.arbitragem@fpf.pt subject:"Nomeação de jogo" is:unread'
+                    print(f"Query used: {query}")
+
+                    # Fetch the list of unread emails
                     results = service.users().messages().list(
                         userId='me',
-                        maxResults=10,
                         q=query
                     ).execute()
-                    
+
+                    # Extract the list of messages
                     messages = results.get('messages', [])
+                    print(f"Found {len(messages)} unread emails.")
+
+                    # Process each email
                     for msg in messages:
-                        executor.submit(process_email, msg['id'])
+                        msg_id = msg['id']
+                        print(f"Processing email {msg_id}...")
+
+                        # Submit the email for processing
+                        executor.submit(process_referee_email, msg_id)
+
+                        # Mark the email as read after processing
+                        mark_as_read(service, msg_id)
+                        print(f"Email {msg_id} marked as read.")
+
+                else:
+                    print("No credentials found. Skipping email check.")
+
             except Exception as e:
                 print(f"Error checking emails: {str(e)}")
-            
+
+            # Debugging: Indicate the end of the current iteration
+            print("Waiting for 5 minutes before checking again...")
+
             # Wait 5 minutes before checking again
             time.sleep(300)
 
@@ -169,8 +193,6 @@ def check_emails_periodically():
 @app.before_first_request
 def start_background_tasks():
     executor.submit(check_emails_periodically)
-
-
 
 def create_calendar_event(service, extracted_data):
     """Create a Google Calendar event from extracted email data"""
@@ -202,6 +224,7 @@ def create_calendar_event(service, extracted_data):
                     {'method': 'popup', 'minutes': 24 * 60},  # 1 day before reminder
                 ],
             },
+            'colorId': '8',  # Set the event color to gray
         }
     
         event = service.events().insert(
@@ -217,6 +240,37 @@ def create_calendar_event(service, extracted_data):
         print(f"Error creating event: {str(e)}")
         return None
 
+def mark_as_read(service, msg_id):
+    """Mark an email as read by removing the 'UNREAD' label"""
+    try:
+        # Debugging: Print the message ID being processed
+        print(f"Attempting to mark email {msg_id} as read...")
+
+        # Debugging: Fetch the email's current labels before modification
+        email = service.users().messages().get(userId='me', id=msg_id, format='metadata').execute()
+        current_labels = email.get('labelIds', [])
+        print(f"Current labels for email {msg_id}: {current_labels}")
+
+        # Mark the email as read by removing the 'UNREAD' label
+        service.users().messages().modify(
+            userId='me',
+            id=msg_id,
+            body={'removeLabelIds': ['UNREAD']}
+        ).execute()
+
+        # Debugging: Fetch the email's labels after modification
+        updated_email = service.users().messages().get(userId='me', id=msg_id, format='metadata').execute()
+        updated_labels = updated_email.get('labelIds', [])
+        print(f"Updated labels for email {msg_id}: {updated_labels}")
+
+        # Confirm if the 'UNREAD' label was removed
+        if 'UNREAD' not in updated_labels:
+            print(f"Email {msg_id} successfully marked as read.")
+        else:
+            print(f"Email {msg_id} might not have been marked as read. Check the labels.")
+
+    except Exception as e:
+        print(f"Error marking email as read: {str(e)}")
 
 @app.route('/email/<message_id>')
 def view_email(message_id):
