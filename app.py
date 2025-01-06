@@ -4,6 +4,7 @@ from googleapiclient.discovery import build
 import os
 import json
 import base64
+import re
 from credentials import get_credentials
 
 app = Flask(__name__)
@@ -110,12 +111,32 @@ def view_email(message_id):
     else:
         body = base64.urlsafe_b64decode(message['payload']['body']['data']).decode('utf-8')
     
+    # Extract structured information using regex
+    extracted_data = {}
+    try:
+        extracted_data = {
+            'competicao': re.search(r"Competição: (.*?)<br", body).group(1),
+            'data_hora': re.search(r"Data/Hora: (.*?)<br", body).group(1),
+            'clubes': re.search(r"Clubes: (.*?)<br", body).group(1),
+            'recinto': re.search(r"Recinto de jogo: (.*?)<br", body).group(1),
+            'localidade': re.search(r"Localidade: (.*?)<br", body).group(1),
+            'codigo': re.search(r"Código de jogo AOL: (.*?)&nbsp;", body).group(1),
+            'arbitros': re.findall(
+                r"<td style='border: 1px solid black'>(.*?)</td><td style='border: 1px solid black'>(.*?)</td><td style='border: 1px solid black'>(.*?)</td><td style='border: 1px solid black'>(.*?)</td>", 
+                body
+            )
+        }
+    except AttributeError:
+        # If regex fails, show raw body
+        extracted_data = {'raw_body': body}
+
     return render_template('email.html', 
         from_email=headers.get('From'),
         to=headers.get('To'),
         subject=headers.get('Subject'),
         date=headers.get('Date'),
-        body=body
+        body=body,
+        extracted_data=extracted_data
     )
 
 @app.route('/send', methods=['POST'])

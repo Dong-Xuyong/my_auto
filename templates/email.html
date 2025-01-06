@@ -51,9 +51,52 @@
             <div><strong>Subject:</strong> {{ subject }}</div>
         </div>
         
-        <div class="email-body">
-            {{ body }}
-        </div>
+        {% if extracted_data.raw_body %}
+            <div class="email-body">
+                {{ extracted_data.raw_body }}
+            </div>
+        {% else %}
+            <div class="extracted-info">
+                <h3>Informações Extraídas</h3>
+                <div class="info-section">
+                    <div><strong>Competição:</strong> {{ extracted_data.competicao }}</div>
+                    <div><strong>Data/Hora:</strong> {{ extracted_data.data_hora }}</div>
+                    <div><strong>Clubes:</strong> {{ extracted_data.clubes }}</div>
+                    <div><strong>Recinto de jogo:</strong> {{ extracted_data.recinto }}</div>
+                    <div><strong>Localidade:</strong> {{ extracted_data.localidade }}</div>
+                    <div><strong>Código de jogo AOL:</strong> {{ extracted_data.codigo }}</div>
+                </div>
+                
+                <h4>Árbitros</h4>
+                <table class="arbitros-table">
+                    <thead>
+                        <tr>
+                            <th>Nome</th>
+                            <th>Código</th>
+                            <th>Função</th>
+                            <th>Contacto</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for arbitro in extracted_data.arbitros %}
+                        <tr>
+                            <td>{{ arbitro[0] }}</td>
+                            <td>{{ arbitro[1] }}</td>
+                            <td>{{ arbitro[2] }}</td>
+                            <td>{{ arbitro[3] }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="raw-email">
+                <h3>Conteúdo Original</h3>
+                <div class="email-body">
+                    {{ body }}
+                </div>
+            </div>
+        {% endif %}
     </div>
 </body>
 </html>
