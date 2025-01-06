@@ -1,6 +1,8 @@
 from flask import Flask, redirect, url_for, session, request, render_template
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
+from flask_executor import Executor
+from datetime import datetime, timedelta
 import os
 import json
 import base64
@@ -9,6 +11,7 @@ from credentials import get_credentials
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key_here'
+executor = Executor(app)
 
 # OAuth2 client configuration
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly',
@@ -58,6 +61,40 @@ def auth_google():
     session['credentials'] = credentials_to_dict(credentials)
     return redirect(url_for('index'))
 
+def process_email(message_id):
+    """Process individual email and create calendar event"""
+    credentials = get_credentials()
+    service = build('gmail', 'v1', credentials=credentials)
+    message = service.users().messages().get(
+        userId='me',
+        id=message_id,
+        format='full'
+    ).execute()
+    
+    # Extract body
+    if 'parts' in message['payload']:
+        body = next(part['body']['data'] for part in message['payload']['parts'] if part['mimeType'] == 'text/plain')
+        body = base64.urlsafe_b64decode(body).decode('utf-8')
+    else:
+        body = base64.urlsafe_b64decode(message['payload']['body']['data']).decode('utf-8')
+    
+    # Extract structured information using regex
+    try:
+        extracted_data = {
+            'competicao': re.search(r"Competição: (.*?)<br", body).group(1),
+            'data_hora': re.search(r"Data/Hora: (.*?)<br", body).group(1),
+            'clubes': re.search(r"Clubes: (.*?)<br", body).group(1),
+            'recinto': re.search(r"Recinto de jogo: (.*?)<br", body).group(1),
+            'localidade': re.search(r"Localidade: (.*?)<br", body).group(1),
+            'codigo': re.search(r"Código de jogo AOL: (.*?)&nbsp;", body).group(1),
+        }
+        
+        # Create calendar event
+        calendar_service = build('calendar', 'v3', credentials=credentials)
+        create_calendar_event(calendar_service, extracted_data)
+    except AttributeError:
+        print(f"Failed to extract data from email {message_id}")
+
 @app.route('/emails')
 def list_emails():
     credentials = get_credentials()
@@ -97,11 +134,43 @@ def list_emails():
         print(f"Date: {email_details['date']}")
         print("-" * 40)
         
+        # Process email in background
+        executor.submit(process_email, msg['id'])
+        
         full_messages.append(email_details)
     
     return render_template('emails.html', messages=full_messages)
 
-from datetime import datetime
+def check_emails_periodically():
+    """Background task to check for new emails periodically"""
+    with app.app_context():
+        while True:
+            try:
+                credentials = get_credentials()
+                if credentials:
+                    service = build('gmail', 'v1', credentials=credentials)
+                    query = 'from:no.reply.afbraga.arbitragem@fpf.pt subject:"Nomeação de jogo"'
+                    results = service.users().messages().list(
+                        userId='me',
+                        maxResults=10,
+                        q=query
+                    ).execute()
+                    
+                    messages = results.get('messages', [])
+                    for msg in messages:
+                        executor.submit(process_email, msg['id'])
+            except Exception as e:
+                print(f"Error checking emails: {str(e)}")
+            
+            # Wait 5 minutes before checking again
+            time.sleep(300)
+
+# Start background task when app starts
+@app.before_first_request
+def start_background_tasks():
+    executor.submit(check_emails_periodically)
+
+
 
 def create_calendar_event(service, extracted_data):
     """Create a Google Calendar event from extracted email data"""
@@ -110,6 +179,10 @@ def create_calendar_event(service, extracted_data):
         dt_format = "%d-%m-%Y %H:%M"  # Expected format from email
         dt_obj = datetime.strptime(extracted_data['data_hora'], dt_format)
         iso_format = dt_obj.isoformat() + "Z"  # Convert to ISO format with UTC timezone
+        
+        # Calculate end time by adding 3 hours to the start time
+        end_dt_obj = dt_obj + timedelta(hours=3)
+        end_iso_format = end_dt_obj.isoformat() + "Z"
         
         event = {
             'summary': f"Jogo: {extracted_data['clubes']}",
@@ -120,19 +193,16 @@ def create_calendar_event(service, extracted_data):
                 'timeZone': 'Europe/Lisbon',
             },
             'end': {
-                'dateTime': iso_format,
+                'dateTime': end_iso_format,
                 'timeZone': 'Europe/Lisbon',
             },
-        'attendees': [
-            {'email': 'no.reply.afbraga.arbitragem@fpf.pt'},
-        ],
-        'reminders': {
-            'useDefault': False,
-            'overrides': [
-                {'method': 'popup', 'minutes': 60},
-            ],
-        },
-    }
+            'reminders': {
+                'useDefault': False,
+                'overrides': [
+                    {'method': 'popup', 'minutes': 24 * 60},  # 1 day before reminder
+                ],
+            },
+        }
     
         event = service.events().insert(
             calendarId='primary',
