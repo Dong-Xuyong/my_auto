@@ -12,12 +12,21 @@ app.secret_key = 'your_secret_key_here'
 
 # OAuth2 client configuration
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly',
-          'https://www.googleapis.com/auth/gmail.send']
+          'https://www.googleapis.com/auth/gmail.send',
+          'https://www.googleapis.com/auth/calendar.events']
 CLIENT_SECRETS_FILE = 'client_secret.json'
+
+def has_required_scopes(credentials):
+    """Check if credentials have all required scopes"""
+    if not credentials:
+        return False
+    granted_scopes = set(credentials.get('scopes', []))
+    required_scopes = set(SCOPES)
+    return required_scopes.issubset(granted_scopes)
 
 @app.route('/')
 def index():
-    if 'credentials' not in session:
+    if 'credentials' not in session or not has_required_scopes(session['credentials']):
         return redirect(url_for('authorize'))
     return render_template('index.html')
 
@@ -92,9 +101,58 @@ def list_emails():
     
     return render_template('emails.html', messages=full_messages)
 
+from datetime import datetime
+
+def create_calendar_event(service, extracted_data):
+    """Create a Google Calendar event from extracted email data"""
+    try:
+        # Parse and format the date
+        dt_format = "%d-%m-%Y %H:%M"  # Expected format from email
+        dt_obj = datetime.strptime(extracted_data['data_hora'], dt_format)
+        iso_format = dt_obj.isoformat() + "Z"  # Convert to ISO format with UTC timezone
+        
+        event = {
+            'summary': f"Jogo: {extracted_data['clubes']}",
+            'location': f"{extracted_data['recinto']}, {extracted_data['localidade']}",
+            'description': f"Competição: {extracted_data['competicao']}\nCódigo: {extracted_data['codigo']}",
+            'start': {
+                'dateTime': iso_format,
+                'timeZone': 'Europe/Lisbon',
+            },
+            'end': {
+                'dateTime': iso_format,
+                'timeZone': 'Europe/Lisbon',
+            },
+        'attendees': [
+            {'email': 'no.reply.afbraga.arbitragem@fpf.pt'},
+        ],
+        'reminders': {
+            'useDefault': False,
+            'overrides': [
+                {'method': 'popup', 'minutes': 60},
+            ],
+        },
+    }
+    
+        event = service.events().insert(
+            calendarId='primary',
+            body=event
+        ).execute()
+        print(f"Event created: {event.get('htmlLink')}")
+        return event
+    except ValueError as e:
+        print(f"Error parsing date: {str(e)}")
+        return None
+    except Exception as e:
+        print(f"Error creating event: {str(e)}")
+        return None
+
+
 @app.route('/email/<message_id>')
 def view_email(message_id):
     credentials = get_credentials()
+    if not has_required_scopes(session['credentials']):
+        return redirect(url_for('authorize'))
     service = build('gmail', 'v1', credentials=credentials)
     message = service.users().messages().get(
         userId='me',
@@ -131,6 +189,11 @@ def view_email(message_id):
         # If regex fails, show raw body
         extracted_data = {'raw_body': body}
 
+    # Create calendar event if data was extracted successfully
+    if 'competicao' in extracted_data:
+        calendar_service = build('calendar', 'v3', credentials=credentials)
+        create_calendar_event(calendar_service, extracted_data)
+    
     return render_template('email.html', 
         from_email=headers.get('From'),
         to=headers.get('To'),
